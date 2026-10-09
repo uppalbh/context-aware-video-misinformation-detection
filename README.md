@@ -1,6 +1,6 @@
 # ClipContext — Final feature set and processing pipeline
 
-**Implemented:** MP4/MOV ingestion, background media validation/audio extraction, private session records, and automatic transcription with segment timestamps, word timestamps, and a complete second-by-second word dictionary. Start with [setup and API documentation](docs/SETUP.md) and [teammate integration contracts](docs/INTEGRATION.md). The roadmap below describes the larger product; only stages 1–2 are implemented. Transcription completion is not a misinformation assessment.
+**Implemented:** MP4/MOV upload, [supported direct HTTPS video URLs](docs/URL_INGESTION.md), background media validation/audio extraction, private session records, and automatic transcription with segment timestamps, word timestamps, and a complete second-by-second word dictionary. Start with [setup and API documentation](docs/SETUP.md), [teammate integration contracts](docs/INTEGRATION.md), and the [completion checklist](docs/COMPLETION.md). The roadmap below describes the larger product; only stages 1–2 are implemented. Transcription completion is not a misinformation assessment.
 
 For your 24-hour hackathon, I would lock the scope to one complete video-investigation workflow, with an optional experimental audio-forensics model. Your primary goal is to detect misleading context, not merely detect whether a video contains edits.
 

@@ -1,12 +1,13 @@
 # Teammate integration contract
 
-This delivery implements README stages **1–2**: local MP4/MOV ingestion, actual-media validation, audio extraction, queued background processing, persistence and timestamped speech transcription. URL ingestion is deferred. Source retrieval/alignment/context assessment/scoring are downstream modules to implement separately. `transcribed` is never an investigation-completed or fake/real result.
+This delivery implements README stages **1–2**: local MP4/MOV and [supported direct HTTPS URL ingestion](URL_INGESTION.md), actual-media validation, audio extraction, queued background processing, persistence and timestamped speech transcription. Source retrieval/alignment/context assessment/scoring are downstream modules to implement separately. `transcribed` is never an investigation-completed or fake/real result.
 
 ## Module boundaries
 
 | Module | Reusable boundary |
 | --- | --- |
 | `app/media.py` | `inspect(path, Settings) -> metadata`; `extract(path, output, Settings)` probes/decodes private local media, with bounded FFmpeg subprocesses. Neither calls a speech provider nor writes database rows. |
+| `app/url_media.py` | `validate_url(url, hosts)` and `download(url, output, Settings)` handle supported direct media links with public-address pinning, verified TLS and bounded streaming. No provider/database/UI dependency. |
 | `app/transcription.py` | `transcribe(audio_path, api_key, duration) -> transcript` calls OpenAI once, then delegates validation/indexing. No UI or database dependency. |
 | `app/transcript.py` | `normalize(provider_payload, duration) -> transcript`; `word_index(raw_words, duration) -> (words, per_second)` are pure deterministic normalization/index functions. No network, storage, media processes or frontend dependency. |
 | `app/db.py` | `Store.save/get/all/delete` supports server-only Supabase or explicit local SQLite. Transcript fields are JSON/JSONB; no migration is needed to extend the transcript object. |
@@ -25,7 +26,7 @@ The provider module re-exports `normalize` for existing imports. Prefer importin
 
 Poll `GET /api/analyses/{analysis_id}` with the same cookie. Top-level fields include `id`, `status`, `created_at`, `updated_at`, `sha256`, `size_bytes`, `metadata`, `transcript`, `error`, `attempts` and `investigation_status`. The stored owner hash is never returned. Other sessions receive 404.
 
-`queued → extracting → transcribing → transcribed` or `failed`. During queued/active/failed states the transcript may be null. On success `investigation_status` remains **`not_started`**. Hash and media metadata identify/describe a clip, not its truthfulness. Failed jobs expose `{code,message}`, can explicitly retry retained inputs up to three total attempts, and never fabricate a report. Read history, retry and deletion endpoints are described in [SETUP.md](SETUP.md).
+`queued → [downloading for URLs] → extracting → transcribing → transcribed` or `failed`. During queued/active/failed states the transcript may be null. On success `investigation_status` remains **`not_started`**. Hash and media metadata identify/describe a clip, not its truthfulness. Failed jobs expose `{code,message}`, can explicitly retry retained inputs up to three total attempts, and never fabricate a report. Read history, retry and deletion endpoints are described in [SETUP.md](SETUP.md); URL API/record fields and migration 002 are in [URL_INGESTION.md](URL_INGESTION.md).
 
 ## Transcript shape
 

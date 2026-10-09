@@ -18,6 +18,8 @@ from filelock import FileLock
 
 from app.config import Settings
 from app.db import Store
+from app.errors import ProcessingError
+from app.url_media import validate_url
 from app.worker import ACTIVE, recover, tick
 
 
@@ -102,6 +104,30 @@ def create_app(cfg=None, run_worker=True):
     def public(row):
         return {k: v for k, v in row.items() if k != "owner"}
 
+    async def check_capacity(user):
+        rows = await asyncio.to_thread(app.state.store.all)
+        if sum(r["status"] in ACTIVE for r in rows) >= cfg.max_pending:
+            raise HTTPException(429, "Processing queue is full. Retry later.")
+        if sum(r["owner"] == user for r in rows) >= 10 or len(rows) >= 500:
+            raise HTTPException(
+                429, "Daily analysis capacity reached. Try again after retention expires."
+            )
+
+    def queued_row(user, analysis_id):
+        return {
+            "id": analysis_id,
+            "owner": user,
+            "status": "queued",
+            "created_at": time.time(),
+            "sha256": "",
+            "size_bytes": 0,
+            "metadata": None,
+            "transcript": None,
+            "error": None,
+            "attempts": 1,
+            "investigation_status": "not_started",
+        }
+
     @app.get("/")
     def index(request: Request):
         response = FileResponse(static / "index.html")
@@ -121,7 +147,8 @@ def create_app(cfg=None, run_worker=True):
         return {
             "max_upload_bytes": cfg.max_upload_mb * 1024 * 1024,
             "max_duration_seconds": cfg.max_duration,
-            "url_ingestion": False,
+            "url_ingestion": bool(cfg.url_hosts),
+            "video_url_hosts": list(cfg.url_hosts),
         }
 
     @app.post("/api/analyses", status_code=202)
@@ -134,14 +161,7 @@ def create_app(cfg=None, run_worker=True):
         }:
             raise HTTPException(415, "Send an MP4/MOV file as the raw request body.")
         async with upload_lock:
-            rows = await asyncio.to_thread(app.state.store.all)
-            if sum(r["status"] in ACTIVE for r in rows) >= cfg.max_pending:
-                raise HTTPException(429, "Processing queue is full. Retry later.")
-            # Bound records/storage and provider spending per session.
-            if sum(r["owner"] == user for r in rows) >= 10 or len(rows) >= 500:
-                raise HTTPException(
-                    429, "Daily analysis capacity reached. Try again after retention expires."
-                )
+            await check_capacity(user)
             limit = cfg.max_upload_mb * 1024 * 1024
             try:
                 length = int(request.headers.get("content-length", "0"))
@@ -164,19 +184,8 @@ def create_app(cfg=None, run_worker=True):
                             await asyncio.to_thread(f.write, chunk)
                 if not size:
                     raise HTTPException(400, "Clip is empty.")
-                row = {
-                    "id": analysis_id,
-                    "owner": user,
-                    "status": "queued",
-                    "created_at": time.time(),
-                    "sha256": digest.hexdigest(),
-                    "size_bytes": size,
-                    "metadata": None,
-                    "transcript": None,
-                    "error": None,
-                    "attempts": 1,
-                    "investigation_status": "not_started",
-                }
+                row = queued_row(user, analysis_id)
+                row.update(sha256=digest.hexdigest(), size_bytes=size, ingestion={"kind": "upload"})
                 await asyncio.to_thread(app.state.store.save, row, True)
             except BaseException as exc:
                 shutil.rmtree(folder, ignore_errors=True)
@@ -184,6 +193,43 @@ def create_app(cfg=None, run_worker=True):
                     raise HTTPException(408, "Upload timed out.")
                 raise
             return {"analysis_id": analysis_id, "status": "queued"}
+
+    @app.post("/api/analyses/url", status_code=202)
+    async def url_upload(request: Request):
+        write_guard(request)
+        user = owner(request)
+        # Bound JSON body before parsing; endpoint does not download in the HTTP request.
+        body = bytearray()
+        try:
+            async with asyncio.timeout(10):
+                async for chunk in request.stream():
+                    body.extend(chunk)
+                    if len(body) > 4096:
+                        raise HTTPException(413, "URL request is too large.")
+        except TimeoutError:
+            raise HTTPException(408, "URL submission timed out.")
+        import json
+
+        try:
+            value = json.loads(body)
+            url = validate_url(value["url"], cfg.url_hosts)
+        except (ValueError, KeyError, TypeError):
+            raise HTTPException(400, "Send a JSON object with a supported video url.")
+        except ProcessingError as exc:
+            raise HTTPException(422, exc.public())
+        async with upload_lock:
+            await check_capacity(user)
+            analysis_id = uuid.uuid4().hex
+            folder = cfg.data_dir / analysis_id
+            folder.mkdir(mode=0o700)
+            row = queued_row(user, analysis_id)
+            row["ingestion"] = {"kind": "url", "url": url}
+            try:
+                await asyncio.to_thread(app.state.store.save, row, True)
+            except BaseException:
+                shutil.rmtree(folder, ignore_errors=True)
+                raise
+        return {"analysis_id": analysis_id, "status": "queued"}
 
     @app.get("/api/analyses")
     async def history(request: Request):
@@ -207,7 +253,10 @@ def create_app(cfg=None, run_worker=True):
                 raise HTTPException(
                     409, "Only failed jobs with fewer than three attempts can retry."
                 )
-            if not (cfg.data_dir / analysis_id / "clip").exists():
+            if (
+                not (cfg.data_dir / analysis_id / "clip").exists()
+                and row.get("ingestion", {}).get("kind") != "url"
+            ):
                 raise HTTPException(410, "Media was removed. Upload a new clip.")
             rows = await asyncio.to_thread(app.state.store.all)
             if sum(r["status"] in ACTIVE for r in rows) >= cfg.max_pending:

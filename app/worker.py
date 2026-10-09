@@ -1,4 +1,5 @@
 import logging
+import hashlib
 import re
 import shutil
 import time
@@ -6,15 +7,33 @@ import time
 from app.errors import ProcessingError
 from app.media import extract, inspect
 from app.transcription import transcribe
+from app.url_media import download
 
 logger = logging.getLogger(__name__)
-ACTIVE = {"queued", "extracting", "transcribing"}
+ACTIVE = {"queued", "downloading", "extracting", "transcribing"}
 
 
 def process(row, store, cfg):
     folder = cfg.data_dir / row["id"]
     audio = folder / "audio.wav"
     try:
+        ingestion = row.get("ingestion", {"kind": "upload"})
+        if ingestion["kind"] == "url" and not (folder / "clip").exists():
+            row.update(status="downloading", error=None)
+            store.save(row)
+            downloaded = download(ingestion["url"], folder / "clip", cfg)
+            row.update(sha256=downloaded["sha256"], size_bytes=downloaded["size_bytes"])
+            ingestion["final_url"] = downloaded["final_url"]
+        elif ingestion["kind"] == "url" and not row["sha256"]:
+            # Crash after atomic download but before persistence: recover hash without re-fetching.
+            clip = folder / "clip"
+            row["size_bytes"] = clip.stat().st_size
+            if not 0 < row["size_bytes"] <= cfg.max_upload_mb * 1024 * 1024:
+                raise ProcessingError(
+                    "upload_size_limit", "Retained clip exceeds the upload size limit."
+                )
+            with clip.open("rb") as f:
+                row["sha256"] = hashlib.file_digest(f, "sha256").hexdigest()
         row.update(status="extracting", error=None)
         store.save(row)
         row["metadata"] = inspect(folder / "clip", cfg)
@@ -54,7 +73,8 @@ def recover(store, cfg):
         # Remove extracted audio left by abrupt shutdown, without discarding retryable inputs.
         if re.fullmatch(r"[0-9a-f]{32}", row["id"]):
             (cfg.data_dir / row["id"] / "audio.wav").unlink(missing_ok=True)
-        if row["status"] in {"extracting", "transcribing"}:
+            (cfg.data_dir / row["id"] / "clip.part").unlink(missing_ok=True)
+        if row["status"] in {"downloading", "extracting", "transcribing"}:
             row.update(
                 status="failed",
                 error={

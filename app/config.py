@@ -32,6 +32,13 @@ class Settings:
     cookie_secure: bool = field(
         default_factory=lambda: os.getenv("COOKIE_SECURE", "true").lower() == "true"
     )
+    url_hosts: tuple[str, ...] = field(
+        default_factory=lambda: tuple(
+            host.strip().lower()
+            for host in os.getenv("VIDEO_URL_HOSTS", "media.w3.org").split(",")
+            if host.strip()
+        )
+    )
 
     def __post_init__(self):
         if not (0 < self.max_duration <= 3600 and 0 < self.max_upload_mb <= 1024):

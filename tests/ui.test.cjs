@@ -47,3 +47,25 @@ test('bounded seconds rendering, 01:05 navigation, and legacy segment context', 
   assert.equal(get('segments').children.length, 1);
   assert.equal(get('download').hidden, false);
 });
+
+test('URL form queues JSON, displays downloading state and safe structured errors', async () => {
+  const {context, get} = app();
+  const requests = [];
+  context.fetch = async (url, options) => {
+    requests.push({url, options});
+    const result = url === '/api/analyses/url' ? {analysis_id:'a'.repeat(32), status:'queued'}
+      : url === '/api/analyses' ? [] : {status:'downloading', transcript:null};
+    return {ok:true, status:200, json:async () => result};
+  };
+  get('video-url').value = 'https://media.w3.org/fixture.mp4';
+  await get('url-upload').onsubmit({preventDefault() {}});
+  assert.equal(requests[0].url, '/api/analyses/url');
+  assert.equal(requests[0].options.method, 'POST');
+  assert.equal(JSON.parse(requests[0].options.body).url, get('video-url').value);
+  assert.match(get('status').textContent, /Downloading supported public video/);
+  assert.equal(get('url-submit').disabled, false);
+  context.fetch = async () => ({ok:false, status:422, json:async () => ({detail:{code:'unsupported_url',message:'Use a supported host.'}})});
+  await get('url-upload').onsubmit({preventDefault() {}});
+  assert.equal(get('notice').textContent, 'Use a supported host.');
+  assert.equal(get('url-submit').disabled, false);
+});

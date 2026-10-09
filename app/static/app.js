@@ -1,12 +1,12 @@
 const $ = id => document.getElementById(id);
 let limits, current, timer, currentTranscript, secondOffset = 0, segmentOffset = 0;
-const labels = {queued: 'Queued', extracting: 'Validating media and extracting audio',
+const labels = {queued: 'Queued', downloading: 'Downloading supported public video', extracting: 'Validating media and extracting audio',
   transcribing: 'Transcribing speech', transcribed: 'Transcript ready · investigation not started', failed: 'Processing failed'};
 async function api(url, options) {
   const response = await fetch(url, options);
   if (!response.ok) {
     let message = `Request failed (${response.status}).`;
-    try { message = (await response.json()).detail || message; } catch { /* non-JSON failure */ }
+    try { const detail = (await response.json()).detail; message = typeof detail === 'string' ? detail : detail?.message || message; } catch { /* non-JSON failure */ }
     throw new Error(message);
   }
   return response.status === 204 ? null : response.json();
@@ -92,7 +92,7 @@ async function select(id) {
     $('delete').hidden = !['failed', 'transcribed'].includes(row.status);
     currentTranscript = row.transcript;
     renderTranscript();
-    if (['queued', 'extracting', 'transcribing'].includes(row.status)) {
+    if (['queued', 'downloading', 'extracting', 'transcribing'].includes(row.status)) {
       timer = setTimeout(() => select(id), 2000);
     } else { await history(); }
   } catch (error) { $('status').textContent = `${error.message} Reopen this clip to try fetching again.`; }
@@ -117,6 +117,16 @@ $('retry').onclick = async () => {
   catch (error) { $('status').textContent = error.message; }
   finally { $('retry').disabled = false; }
 };
+$('url-upload').onsubmit = async event => {
+  event.preventDefault(); $('url-submit').disabled = true; $('notice').textContent = 'Queuing URL…';
+  try {
+    const row = await api('/api/analyses/url', {method:'POST', headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({url:$('video-url').value.trim()})});
+    $('notice').textContent = 'Link queued. Downloading and validation run in the background.';
+    await history(); await select(row.analysis_id);
+  } catch (error) { $('notice').textContent = error.message; }
+  finally { $('url-submit').disabled = false; }
+};
 $('delete').onclick = async () => {
   try { await api(`/api/analyses/${current}`, {method:'DELETE'}); clearTimeout(timer); current = null; $('result').hidden = true; await history(); }
   catch (error) { $('status').textContent = error.message; }
@@ -124,6 +134,8 @@ $('delete').onclick = async () => {
 (async () => {
   try {
     limits = await api('/api/config');
+    $('url-upload').hidden = !limits.url_ingestion;
+    $('url-support').textContent = `Supported hosts: ${(limits.video_url_hosts || []).join(', ')}. HTTPS port 443; no query or fragment.`;
     $('limits').textContent = `MP4 or MOV · up to ${limits.max_upload_bytes / 1024 / 1024} MB · ${limits.max_duration_seconds} seconds. The server validates actual media.`;
     await history();
   } catch (error) { $('notice').textContent = error.message; }

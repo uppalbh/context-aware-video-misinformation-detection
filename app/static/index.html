@@ -10,6 +10,11 @@
 <p>Your audio is sent to OpenAI for transcription. Media and analysis records expire after the server’s configured retention period (24 hours by default).</p>
 <form id="upload"><label for="file">Video file</label><input id="file" type="file" accept=".mp4,.mov,video/mp4,video/quicktime" required>
 <button id="submit" type="submit">Upload & transcribe</button></form>
+<form id="url-upload" hidden><h3>Or use a supported public video link</h3>
+<p id="url-support"></p><label for="video-url">Direct HTTPS video URL</label>
+<input id="video-url" type="url" maxlength="2048" placeholder="https://media.w3.org/…/video.mp4" required>
+<button id="url-submit" type="submit">Download & transcribe</button>
+<p>Only public direct .mp4/.mov files are supported. YouTube pages, login links, signed URLs and other hosts are unsupported. Submit media you’re authorized to process.</p></form>
 <p id="notice" role="status" aria-live="polite"></p></section>
 <section><h2>This session’s clips</h2><p>Records are private to this browser session. Keep cookies to return to them.</p>
 <div id="history"></div></section>
@@ -25,5 +30,5 @@
 <p id="word-unavailable" hidden>Word timing is unavailable for this record. Segment context remains readable; no per-second timings have been inferred.</p>
 <h3>Segment context</h3><button id="segment-prev">Previous segments</button><button id="segment-next">Next segments</button>
 <p id="segment-page" role="status"></p><ol id="segments"></ol></section>
-<footer>URL ingestion is deferred. Upload a local MP4/MOV you’re authorized to process.</footer>
+<footer>Uploads and supported URL downloads use the same validation and transcription pipeline.</footer>
 </main><script src="/static/app.js" defer></script></body></html>

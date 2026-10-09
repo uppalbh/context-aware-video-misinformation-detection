@@ -16,7 +16,9 @@ from app.worker import process, recover, tick
 
 @pytest.fixture
 def cfg(tmp_path):
-    return Settings(data_dir=tmp_path, store="sqlite", cookie_secure=False, max_upload_mb=1)
+    return Settings(
+        data_dir=tmp_path, store="sqlite", cookie_secure=False, max_upload_mb=1, openai_key=""
+    )
 
 
 @pytest.fixture
@@ -286,3 +288,42 @@ def test_delayed_audio_uses_clip_clock(media, cfg):
         samples = array.array("h", wav.readframes(wav.getnframes()))
         assert max(abs(x) for x in samples[:3200]) < 10  # first 0.2 seconds stays silent
         assert max(abs(x) for x in samples[10000:14000]) > 100
+
+
+def test_url_worker_reuses_real_media_pipeline(client, cfg, media, monkeypatch):
+    url = "https://media.w3.org/fixture.mp4"
+    cfg.url_hosts = ("media.w3.org",)
+
+    def downloaded(url, out, settings):
+        import hashlib
+
+        content = media.read_bytes()
+        out.write_bytes(content)
+        return {
+            "sha256": hashlib.sha256(content).hexdigest(),
+            "size_bytes": len(content),
+            "final_url": url,
+        }
+
+    monkeypatch.setattr("app.worker.download", downloaded)
+    response = client.post("/api/analyses/url", json={"url": url})
+    aid = response.json()["analysis_id"]
+    store = client.app.state.store
+    tick(store, cfg)
+    row = store.get(aid)
+    assert row["metadata"]["width"] == 160 and row["size_bytes"] == media.stat().st_size
+    assert row["status"] == "failed" and row["error"]["code"] == "provider_not_configured"
+    assert row["sha256"] and not (cfg.data_dir / aid / "audio.wav").exists()
+    # Simulate a restart after atomic media download but before hash/size were persisted.
+    row.update(sha256="", size_bytes=0)
+    store.save(row)
+
+    def no_refetch(*args):
+        pytest.fail("Retained complete media should not be fetched again")
+
+    monkeypatch.setattr("app.worker.download", no_refetch)
+    assert client.post(f"/api/analyses/{aid}/retry").status_code == 202
+    tick(store, cfg)
+    recovered = store.get(aid)
+    assert recovered["sha256"] and recovered["size_bytes"] == media.stat().st_size
+    assert recovered["error"]["code"] == "provider_not_configured"

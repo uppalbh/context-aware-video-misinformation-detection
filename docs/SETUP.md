@@ -13,14 +13,14 @@ python -m venv .venv
 python -m pip install -e '.[dev]'
 cp .env.example .env
 # Windows PowerShell: Copy-Item .env.example .env
-python -m uvicorn app.main:app --host 127.0.0.1 --port 8000 --workers 1 --timeout-graceful-shutdown 360
+python -m uvicorn app.main:app --host 127.0.0.1 --port 8000 --workers 1 --timeout-graceful-shutdown 480
 ```
 
 Open http://127.0.0.1:8000. The example selects SQLite **only for development** and disables Secure cookies for localhost HTTP. Set `OPENAI_API_KEY` in the server's environment or ignored `.env` file; do not put secrets in the frontend or commit them. A missing key produces an explicit failed job, never sample speech. OpenAI transcription incurs provider charges. The UI discloses that audio is sent to OpenAI.
 
 ## Supabase
 
-1. Apply `supabase/migrations/001_analyses.sql` in an existing Supabase project.
+1. Apply `supabase/migrations/001_analyses.sql`, then `002_url_ingestion.sql` in an existing Supabase project. Existing installations need migration 002 for URL records/statuses.
 2. Configure `STORE=supabase`, `SUPABASE_URL=https://your-project.supabase.co`, and `SUPABASE_SERVICE_ROLE_KEY` server-side.
 3. Set `COOKIE_SECURE=true` behind HTTPS. Keep `DATA_DIR` on a persistent private volume, outside any web-served directory. On Windows, restrict the directory ACL to the server account; Unix creates directories with mode 0700.
 4. Run exactly **one process/worker on one host** with that volume and Supabase table. The local file lock rejects duplicate processes using the same volume. Multi-host deployment requires a distributed claim/lease queue and object storage and is deferred. This app must be the only producer for this table.
@@ -42,6 +42,7 @@ Use a current patched FFmpeg build and run as an unprivileged service account/co
 | `MEDIA_TIMEOUT_SECONDS` | 60 | Timeout per ffprobe/FFmpeg subprocess |
 | `FFMPEG_BIN`, `FFPROBE_BIN` | `ffmpeg`, `ffprobe` | Explicit executable paths supported |
 | `COOKIE_SECURE` | true | Set false only for local HTTP |
+| `VIDEO_URL_HOSTS` | `media.w3.org` | Comma-separated exact HTTPS source hosts; empty disables URL ingestion |
 
 Uploads also time out after 120 seconds; each session may hold ten records, with a global capacity of 500 records until expiry/deletion. One job runs at a time. Video limits are 7680×4320 and 240 fps. Audio becomes mono 16 kHz PCM WAV; extracted output must be below 23.9 MB. Raising the duration limit may trigger this audio limit instead of silently transcribing only part of a clip.
 
@@ -49,7 +50,7 @@ Extracted audio is deleted after each attempt and leftover audio is removed duri
 
 ## API contract
 
-Establish the cookie with `GET /`. `POST /api/analyses` takes **raw video bytes**, not multipart: Content-Type `video/mp4` or `video/quicktime`. The MIME is an admission hint; ffprobe checks the actual container, tracks, duration and dimensions asynchronously. Upload receipt returns HTTP 202 `{analysis_id, status: "queued"}` immediately after streaming/storage. Invalid media later becomes a failed record, with a stable error code and readable message. No URLs are fetched.
+Establish the cookie with `GET /`. `POST /api/analyses` takes **raw video bytes**, not multipart: Content-Type `video/mp4` or `video/quicktime`. The MIME is an admission hint; ffprobe checks the actual container, tracks, duration and dimensions asynchronously. Upload receipt returns HTTP 202 `{analysis_id, status: "queued"}` immediately after streaming/storage. Invalid media later becomes a failed record, with a stable error code and readable message. Submit supported direct URLs as JSON to `POST /api/analyses/url`; see [URL contract](URL_INGESTION.md).
 
 - `GET /api/config`: public limits.
 - `GET /api/analyses`: this cookie's retained records.
@@ -57,7 +58,7 @@ Establish the cookie with `GET /`. `POST /api/analyses` takes **raw video bytes*
 - `POST /api/analyses/{id}/retry`: explicit retry of a failed retained clip, three attempts maximum.
 - `DELETE /api/analyses/{id}`: remove a terminal record and media. Active jobs return 409.
 
-States: `queued → extracting → transcribing → transcribed`, or `failed`. `transcribed` means **only transcription succeeded**. `investigation_status` remains `not_started`; source retrieval, alignment, fact checking, scores and reports are not implemented. Hash and metadata do not establish truth. Segment schema: `{id, start, end, text}`, with finite seconds relative to the uploaded clip. Speech recognition may make mistakes; review the transcript before downstream use.
+States: `queued → [downloading for URLs] → extracting → transcribing → transcribed`, or `failed`. `transcribed` means **only transcription succeeded**. `investigation_status` remains `not_started`; source retrieval, alignment, fact checking, scores and reports are not implemented. Hash and metadata do not establish truth. Segment schema: `{id, start, end, text}`, with finite seconds relative to the uploaded clip. Speech recognition may make mistakes; review the transcript before downstream use.
 
 The provider is OpenAI `whisper-1` with `verbose_json` and both `timestamp_granularities[]=word` and `timestamp_granularities[]=segment`, per [official speech-to-text documentation](https://developers.openai.com/api/docs/guides/speech-to-text). The full extracted audio is sent in one request; the video is **not** sliced into one-second chunks. Existing `OPENAI_API_KEY` configuration is sufficient. Provider requests have a 180-second timeout and do not automatically retry. Missing keys, rejected credentials, quota/rate limits, network failures, empty speech and invalid timestamps have distinguishable errors. Provider bodies and FFmpeg stderr are never exposed as user messages.
 
@@ -81,7 +82,7 @@ If word data is missing, null, or empty but valid segments exist, `word_timing_s
 
 The UI displays at most 60 second buckets and 100 context segments at a time, supports elapsed-second navigation, and downloads the full private transcript as JSON (including words and exact timings). The API and JSON download contain the full index within configured duration limits.
 
-URL ingestion is deferred: no partial downloader, public media endpoint, SSRF surface, or unsupported source claims are included.
+Supported public URL ingestion and its safety boundaries are documented in [URL_INGESTION.md](URL_INGESTION.md).
 
 ## Verification
 
