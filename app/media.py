@@ -35,7 +35,7 @@ def inspect(path: Path, cfg: Settings) -> dict:
                     "file",
                     "-show_format",
                     "-show_entries",
-                    "format=format_name,duration:stream=codec_type,width,height,avg_frame_rate,duration,sample_rate,channels:stream_disposition=attached_pic",
+                    "format=format_name,duration,start_time:stream=codec_type,width,height,avg_frame_rate,duration,start_time,sample_rate,channels:stream_disposition=attached_pic",
                     "-of",
                     "json",
                     str(path),
@@ -66,6 +66,10 @@ def inspect(path: Path, cfg: Settings) -> dict:
                 "media_limits", "Video dimensions or frame rate exceed supported limits."
             )
         audio_duration = float(audio.get("duration", duration))
+        timeline_start = float(fmt.get("start_time", 0))
+        audio_start = float(audio.get("start_time", timeline_start)) - timeline_start
+        if not math.isfinite(timeline_start) or not math.isfinite(audio_start):
+            raise ValueError()
         if not math.isfinite(audio_duration) or audio_duration <= 0:
             raise ValueError()
         return {
@@ -76,6 +80,8 @@ def inspect(path: Path, cfg: Settings) -> dict:
             "audio_duration": audio_duration,
             "sample_rate": int(audio["sample_rate"]),
             "channels": int(audio["channels"]),
+            "audio_start_seconds": audio_start,
+            "timeline_origin": "container_start",
         }
     except (KeyError, ValueError, StopIteration, TypeError, ZeroDivisionError):
         raise ProcessingError("invalid_media", "The clip has invalid or missing media metadata.")
@@ -93,11 +99,15 @@ def extract(path: Path, output: Path, cfg: Settings):
             "1",
             "-protocol_whitelist",
             "file",
+            "-copyts",
+            "-start_at_zero",
             "-i",
             str(path),
             "-map",
             "0:a:0",
             "-vn",
+            "-af",
+            "aresample=async=1:first_pts=0",
             "-t",
             str(cfg.max_duration),
             "-ac",

@@ -1,5 +1,5 @@
 const $ = id => document.getElementById(id);
-let limits, current, timer;
+let limits, current, timer, currentTranscript, secondOffset = 0, segmentOffset = 0;
 const labels = {queued: 'Queued', extracting: 'Validating media and extracting audio',
   transcribing: 'Transcribing speech', transcribed: 'Transcript ready · investigation not started', failed: 'Processing failed'};
 async function api(url, options) {
@@ -14,6 +14,60 @@ async function api(url, options) {
 function timestamp(value) {
   return `${Math.floor(value / 60)}:${(value % 60).toFixed(1).padStart(4, '0')}`;
 }
+function elapsed(second) {
+  return `${String(Math.floor(second / 60)).padStart(2, '0')}:${String(second % 60).padStart(2, '0')}`;
+}
+function transcriptRow(label, content) {
+  const li = document.createElement('li'), time = document.createElement('time'), text = document.createElement('span');
+  time.textContent = label; text.textContent = content; li.append(time, text);
+  return li;
+}
+function renderTranscript() {
+  const transcript = currentTranscript;
+  const seconds = transcript?.transcript_by_second;
+  const available = transcript?.word_timing_status === 'available' && seconds;
+  $('seconds-view').hidden = !available;
+  $('word-unavailable').hidden = !transcript || Boolean(available);
+  $('download').hidden = !transcript;
+  $('seconds').replaceChildren();
+  if (available) {
+    const count = Object.keys(seconds).length;
+    secondOffset = Math.max(0, Math.min(secondOffset, Math.max(0, count - 1)));
+    $('second-jump').max = count - 1;
+    $('second-jump').value = secondOffset;
+    const end = Math.min(secondOffset + 60, count);
+    $('second-page').textContent = `Seconds ${secondOffset}–${end - 1} of ${count} elapsed-second buckets`;
+    for (let second = secondOffset; second < end; second++) {
+      $('seconds').append(transcriptRow(elapsed(second), seconds[String(second)]?.join(' ') || 'No word starts in this second.'));
+    }
+    $('second-prev').disabled = secondOffset === 0;
+    $('second-next').disabled = end >= count;
+  }
+  const segments = transcript?.segments || [];
+  segmentOffset = Math.max(0, Math.min(segmentOffset, Math.max(0, segments.length - 1)));
+  const segmentEnd = Math.min(segmentOffset + 100, segments.length);
+  $('segments').replaceChildren();
+  for (const segment of segments.slice(segmentOffset, segmentEnd)) {
+    $('segments').append(transcriptRow(`${timestamp(segment.start)}–${timestamp(segment.end)}`, segment.text));
+  }
+  $('segment-page').textContent = segments.length ? `Segments ${segmentOffset + 1}–${segmentEnd} of ${segments.length}` : '';
+  $('segment-prev').disabled = segmentOffset === 0;
+  $('segment-next').disabled = segmentEnd >= segments.length;
+}
+$('second-prev').onclick = () => { secondOffset -= 60; renderTranscript(); };
+$('second-next').onclick = () => { secondOffset += 60; renderTranscript(); };
+$('second-jump').onchange = () => {
+  const value = Number($('second-jump').value);
+  if (Number.isInteger(value) && value >= 0) { secondOffset = value; renderTranscript(); }
+};
+$('segment-prev').onclick = () => { segmentOffset -= 100; renderTranscript(); };
+$('segment-next').onclick = () => { segmentOffset += 100; renderTranscript(); };
+$('download').onclick = () => {
+  if (!currentTranscript) return;
+  const url = URL.createObjectURL(new Blob([JSON.stringify(currentTranscript, null, 2)], {type:'application/json'}));
+  const link = document.createElement('a'); link.href = url; link.download = `clipcontext-${current}-transcript.json`;
+  link.click(); setTimeout(() => URL.revokeObjectURL(url), 1000);
+};
 async function history() {
   const rows = await api('/api/analyses');
   $('history').replaceChildren();
@@ -26,6 +80,7 @@ async function history() {
   }
 }
 async function select(id) {
+  if (current !== id) { secondOffset = 0; segmentOffset = 0; currentTranscript = null; renderTranscript(); }
   clearTimeout(timer); current = id;
   $('result').hidden = false;
   try {
@@ -35,12 +90,8 @@ async function select(id) {
     $('metadata').textContent = row.metadata ? `${row.metadata.duration.toFixed(1)} seconds · ${row.metadata.width} × ${row.metadata.height} · ${row.metadata.frame_rate.toFixed(1)} fps` : '';
     $('retry').hidden = row.status !== 'failed' || row.attempts >= 3;
     $('delete').hidden = !['failed', 'transcribed'].includes(row.status);
-    $('segments').replaceChildren();
-    for (const segment of row.transcript?.segments || []) {
-      const li = document.createElement('li'), time = document.createElement('time'), text = document.createElement('span');
-      time.textContent = `${timestamp(segment.start)}–${timestamp(segment.end)}`;
-      text.textContent = segment.text; li.append(time, text); $('segments').append(li);
-    }
+    currentTranscript = row.transcript;
+    renderTranscript();
     if (['queued', 'extracting', 'transcribing'].includes(row.status)) {
       timer = setTimeout(() => select(id), 2000);
     } else { await history(); }

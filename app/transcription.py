@@ -1,47 +1,9 @@
-import math
 from pathlib import Path
 
 import httpx
 
 from app.errors import ProcessingError
-
-
-def normalize(payload: dict, duration: float) -> dict:
-    segments = []
-    previous = 0.0
-    try:
-        for raw in payload["segments"]:
-            start, end = float(raw["start"]), float(raw["end"])
-            text = raw["text"].strip()
-            if not (
-                math.isfinite(start)
-                and math.isfinite(end)
-                and 0 <= start <= duration
-                and start <= end <= duration + 0.5
-                and start >= previous
-            ):
-                raise ValueError()
-            if text:
-                segments.append(
-                    {
-                        "id": len(segments),
-                        "start": round(start, 3),
-                        "end": round(min(end, duration), 3),
-                        "text": text,
-                    }
-                )
-            previous = start
-        if not segments:
-            raise ProcessingError("no_speech", "No timestamped speech was recognized in this clip.")
-        return {
-            "text": " ".join(s["text"] for s in segments),
-            "segments": segments,
-            "language": payload.get("language"),
-            "provider": "openai",
-            "model": "whisper-1",
-        }
-    except (KeyError, TypeError, ValueError, AttributeError):
-        raise ProcessingError("invalid_transcript", "Transcription returned invalid timestamps.")
+from app.transcript import normalize
 
 
 def transcribe(audio: Path, key: str, duration: float) -> dict:
@@ -58,7 +20,7 @@ def transcribe(audio: Path, key: str, duration: float) -> dict:
                 data={
                     "model": "whisper-1",
                     "response_format": "verbose_json",
-                    "timestamp_granularities[]": "segment",
+                    "timestamp_granularities[]": ["word", "segment"],
                 },
             )
         if response.status_code in (401, 403):

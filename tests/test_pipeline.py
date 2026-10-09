@@ -92,7 +92,7 @@ def test_provider_errors(monkeypatch, tmp_path, status, code):
     audio.write_bytes(b"test")
 
     def post(self, url, **kwargs):
-        assert kwargs["data"]["timestamp_granularities[]"] == "segment"
+        assert kwargs["data"]["timestamp_granularities[]"] == ["word", "segment"]
         assert kwargs["data"]["model"] == "whisper-1"
         return httpx.Response(status, json={"error": "SECRET"})
 
@@ -113,7 +113,15 @@ def test_worker_transcript_and_retry(client, cfg, monkeypatch):
     assert not (cfg.data_dir / aid / "audio.wav").exists()
     assert client.post(f"/api/analyses/{aid}/retry").status_code == 202
     transcript = normalize(
-        {"segments": [{"start": 0, "end": 1, "text": "Real contract fixture"}]}, 2
+        {
+            "segments": [{"start": 0, "end": 1, "text": "Real contract fixture"}],
+            "words": [
+                {"word": "Real", "start": 0.123456, "end": 0.7},
+                {"word": "contract", "start": 0.7, "end": 1.2},
+                {"word": "fixture", "start": 1.2, "end": 1.8},
+            ],
+        },
+        2,
     )
     monkeypatch.setattr("app.worker.transcribe", lambda *a: transcript)
     process(store.get(aid), store, cfg)
@@ -131,8 +139,15 @@ def test_recovery_and_retention(client, cfg):
     row = store.get(aid)
     row["status"] = "transcribing"
     store.save(row)
+    (cfg.data_dir / aid / "audio.wav").write_bytes(b"interrupted audio")
+    unrelated = cfg.data_dir / "unrelated-folder"
+    unrelated.mkdir()
+    orphan = cfg.data_dir / ("a" * 32)
+    orphan.mkdir()
     recover(store, cfg)
     assert store.get(aid)["error"]["code"] == "interrupted"
+    assert not (cfg.data_dir / aid / "audio.wav").exists()
+    assert unrelated.exists() and not orphan.exists()
     row = store.get(aid)
     row["created_at"] = time.time() - 100000
     store.save(row)
@@ -232,3 +247,42 @@ def test_queue_and_chunked_limit(client, cfg):
     response = client.post("/api/analyses", content=chunks(), headers={"Content-Type": "video/mp4"})
     assert response.status_code == 413
     assert not list(cfg.data_dir.glob("*/clip"))
+
+
+def test_delayed_audio_uses_clip_clock(media, cfg):
+    import array
+    import wave
+
+    delayed = cfg.data_dir / "delayed.mp4"
+    subprocess.run(
+        [
+            cfg.ffmpeg,
+            "-v",
+            "error",
+            "-y",
+            "-i",
+            str(media),
+            "-itsoffset",
+            "0.5",
+            "-i",
+            str(media),
+            "-map",
+            "0:v:0",
+            "-map",
+            "1:a:0",
+            "-c",
+            "copy",
+            str(delayed),
+        ],
+        check=True,
+        timeout=30,
+    )
+    metadata = inspect(delayed, cfg)
+    assert 0.4 < metadata["audio_start_seconds"] < 0.6
+    audio = cfg.data_dir / "delayed.wav"
+    extract(delayed, audio, cfg)
+    with wave.open(str(audio), "rb") as wav:
+        assert wav.getnframes() / wav.getframerate() > 1.4
+        samples = array.array("h", wav.readframes(wav.getnframes()))
+        assert max(abs(x) for x in samples[:3200]) < 10  # first 0.2 seconds stays silent
+        assert max(abs(x) for x in samples[10000:14000]) > 100

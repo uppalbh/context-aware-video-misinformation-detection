@@ -1,4 +1,5 @@
 import logging
+import re
 import shutil
 import time
 
@@ -50,6 +51,9 @@ def process(row, store, cfg):
 def recover(store, cfg):
     rows = store.all()
     for row in rows:
+        # Remove extracted audio left by abrupt shutdown, without discarding retryable inputs.
+        if re.fullmatch(r"[0-9a-f]{32}", row["id"]):
+            (cfg.data_dir / row["id"] / "audio.wav").unlink(missing_ok=True)
         if row["status"] in {"extracting", "transcribing"}:
             row.update(
                 status="failed",
@@ -62,7 +66,12 @@ def recover(store, cfg):
     # No auto-resubmission after an interrupted provider call: avoids surprise charges.
     known = {r["id"] for r in rows}
     for folder in cfg.data_dir.iterdir():
-        if folder.is_dir() and folder.name not in known:
+        if (
+            folder.is_dir()
+            and not folder.is_symlink()
+            and re.fullmatch(r"[0-9a-f]{32}", folder.name)
+            and folder.name not in known
+        ):
             shutil.rmtree(folder)
 
 

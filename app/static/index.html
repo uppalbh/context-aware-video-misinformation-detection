@@ -15,6 +15,15 @@
 <div id="history"></div></section>
 <section id="result" hidden><h2>Transcript</h2><p id="status" role="status" aria-live="polite"></p>
 <p id="metadata"></p><button id="retry" hidden>Retry transcription</button><button id="delete" hidden>Delete analysis</button>
-<ol id="segments"></ol></section>
+<button id="download" hidden>Download transcript JSON</button>
+<div id="seconds-view" hidden><h3>Second-by-second words</h3>
+<p>Words appear in the second where they start. An empty bucket means no word starts there; a word may continue from an earlier second. Times are model estimates on the uploaded clip.</p>
+<label for="second-jump">Go to elapsed second (65 = 01:05)</label>
+<input id="second-jump" type="number" min="0" step="1" value="0">
+<button id="second-prev">Previous 60 seconds</button><button id="second-next">Next 60 seconds</button>
+<p id="second-page" role="status"></p><ol id="seconds"></ol></div>
+<p id="word-unavailable" hidden>Word timing is unavailable for this record. Segment context remains readable; no per-second timings have been inferred.</p>
+<h3>Segment context</h3><button id="segment-prev">Previous segments</button><button id="segment-next">Next segments</button>
+<p id="segment-page" role="status"></p><ol id="segments"></ol></section>
 <footer>URL ingestion is deferred. Upload a local MP4/MOV you’re authorized to process.</footer>
 </main><script src="/static/app.js" defer></script></body></html>
