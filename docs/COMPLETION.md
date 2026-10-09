@@ -1,19 +1,25 @@
-# Ingestion and transcription coverage
+# Core MVP coverage and practical limits
 
-| Requested goal | Delivered boundary | Verification |
+| Goal | Delivered | Verification |
 | --- | --- | --- |
-| Upload MP4/MOV | Raw-byte upload API + file UI; queued private analysis ID | Actual MP4/MOV probing, upload/streamed byte limits, corrupt/no-audio cases |
-| Supported public URL | Direct HTTPS media on exact configured hosts; queued URL UI/API | Live public W3C video download + extraction; redirect, pinning, rebinding, IPv4/IPv6 and limit tests |
-| Validate size/format/duration/URL safety | Streaming caps, ffprobe/FFmpeg actual-media validation, pinned public-address TLS downloader | Known-good media and malformed/no-audio/duration-limit fixtures; URL policy/transport failures |
-| Extract audio/store analysis | Private generated paths; metadata/hash; off-request worker; SQLite dev/Supabase production adapter and migrations | Real mono WAV extraction, delayed-audio timing, store transport contracts, retries/retention/restart cleanup |
-| Pretrained automatic speech recognition | Server-only OpenAI whisper-1 request for full audio | Provider request encoding and error contracts; **live STT pending OPENAI_API_KEY** |
-| Preserve segment timestamps | Stored text + ordered segments | Timestamp normalization and persisted worker output |
-| Second-by-second transcript | Exact provider word timings + every elapsed-second bucket by word start | Boundaries/overlaps/fractional tail/empty buckets/order/resource bounds; bounded UI navigation |
-| Store transcript/handle failures | JSON/JSONB transcript, safe errors, explicit limited retry; no fake completed report | API persistence/private access and failed/interrupted/provider cases |
-| Teammate integration | Separate media, URL, provider, pure normalization, storage and orchestration modules | [INTEGRATION.md](INTEGRATION.md), [URL_INGESTION.md](URL_INGESTION.md), documented callable/API contracts |
+| Upload/supported URL | Queued private MP4/MOV; pinned allowlisted HTTPS | Real FFmpeg/probe/extraction, prior live W3C download, policy/transport tests |
+| STT/per-second words | Whisper adapter; provider floats, segment clock, every-second start bucket | Mocked requests, normalization/index tests; live STT unverified |
+| Source retrieval | Permitted multiple-source corpus/import, exact/fuzzy matching, optional embeddings | Distinct/mismatched/overlapping/repeated fixtures; live embeddings unverified |
+| Alignment/context | Separate clocks, approximate ASR, omitted spans/cues, disjoint/reordered flags | Deterministic bounds/spans/ASR/gap tests |
+| Interpretation | Structured Responses, evidence IDs/literal quotes, contradictions/uncertainty, missing-key abstention | Mocked request/output/refusal/error tests; live model quality unverified |
+| Reports/scores | Distinct source rank, ordinal severity, token coverage; null risk without semantics | Persisted mocked complete and key-free inconclusive/synthetic reports |
+| Timeline/history | Paired clock bars, side-by-side text/omissions, evidence IDs, report reopen/download | Node DOM tests and explicit synthetic browser check |
+| Queue/privacy | Durable media/investigation states, retained-transcript retry, recovery, limits/retention | API/store/session/retry/restart tests |
+| Modular handoff | Callable contracts/docs/migrations 001–003 | CI lint/format/Python/Node checks |
 
-Successful processing ends at **transcribed**, with `investigation_status:not_started`. Source retrieval/alignment, context/fact assessment, scores, model training and audio forensics are outside this requested delivery. URL support does not extend to arbitrary video platforms.
+Core implementation is present. No credentials were created, inserted or requested. Private .env remains ignored/unchanged. Live Whisper/context/embeddings and remote Supabase migrations/persistence are unverified; a real credential-backed end-to-end demo remains outstanding. Configured adapters do not establish account/model availability.
 
-Local mandatory pipeline and supported URL path are implemented. Live speech recognition needs a server OpenAI key; remote Supabase initialization/persistence needs configured Supabase credentials plus migrations 001/002. Neither was configured at the audit, and no remote deployment or billing resources were provisioned. The local `.env` is ignored/untracked; no secret is committed. Test transcript fixtures remain tests only, never production fallback output.
+Synthetic demo checks retrieval/alignment/report/storage/UI without speech or semantic calls. It is labeled fabricated, excluded from real ingestion, and has null risk. Contract tests use fabricated transcripts/mocked model outputs, never evidence about real events. Production has no bundled real corpus: operator must import permitted timestamped originals.
 
-Final local audit: **95 Python tests**, **2 frontend tests**, Ruff lint/format, JavaScript syntax and Git diff checks passed. The URL download/extraction smoke check ran against actual public media; provider/Supabase tests use deterministic contract fixtures. This evidence verifies the delivered paths within their stated limits, not arbitrary platform downloads or live speech recognition.
+Bounded heuristic retrieval: ≤100 recordings, top ten lexical sources, optional candidate-passage embedding reranking; no semantic-only all-corpus discovery or internet search. Thresholds/ordinal scores are not calibrated. Repeated/overlapping candidates abstain. Match does not prove originality, truth or intent. Context windows and segment clocks have explicit precision/coverage limits. Models can still reason incorrectly over validated evidence.
+
+Optional audio-forensics training, broad discovery/crawling, retained-video playback, distributed workers, account authentication and deployment are deferred. Timeline compares transcript evidence; raw media are removed after STT and not embedded in browser.
+
+Run pytest, Ruff lint/format, JavaScript syntax and Node UI tests as described in SETUP. CI installs FFmpeg; local real-media tests explicitly skip only if executables are absent. Mocked provider/storage tests never require credentials.
+
+Final local audit: **134 Python tests passed with no skips**, **4 frontend tests passed**, Ruff lint/format, JavaScript syntax and git diff checks passed. Browser synthetic demo persisted its report, displayed separate clocks/omitted qualification, and reopened after page reload. The full upload-to-context-report integration is tested with mocked media/STT/LLM contracts; independent media tests use actual FFmpeg. One existing Starlette TestClient deprecation warning remains. This is fixture/contract evidence, not live provider or remote database verification.

@@ -1,4 +1,4 @@
-# Run the two-stage app
+# Run the evidence workspace
 
 The repository initially contained only the product README. This implementation adds a Python 3.11+ FastAPI application, a same-origin browser UI, and server-side persistence without introducing account registration.
 
@@ -20,7 +20,7 @@ Open http://127.0.0.1:8000. The example selects SQLite **only for development** 
 
 ## Supabase
 
-1. Apply `supabase/migrations/001_analyses.sql`, then `002_url_ingestion.sql` in an existing Supabase project. Existing installations need migration 002 for URL records/statuses.
+1. Apply `supabase/migrations/001_analyses.sql`, `002_url_ingestion.sql`, then `003_investigation.sql`. Apply unapplied migrations before running the new worker. Remote migration execution remains unverified.
 2. Configure `STORE=supabase`, `SUPABASE_URL=https://your-project.supabase.co`, and `SUPABASE_SERVICE_ROLE_KEY` server-side.
 3. Set `COOKIE_SECURE=true` behind HTTPS. Keep `DATA_DIR` on a persistent private volume, outside any web-served directory. On Windows, restrict the directory ACL to the server account; Unix creates directories with mode 0700.
 4. Run exactly **one process/worker on one host** with that volume and Supabase table. The local file lock rejects duplicate processes using the same volume. Multi-host deployment requires a distributed claim/lease queue and object storage and is deferred. This app must be the only producer for this table.
@@ -43,6 +43,10 @@ Use a current patched FFmpeg build and run as an unprivileged service account/co
 | `FFMPEG_BIN`, `FFPROBE_BIN` | `ffmpeg`, `ffprobe` | Explicit executable paths supported |
 | `COOKIE_SECURE` | true | Set false only for local HTTP |
 | `VIDEO_URL_HOSTS` | `media.w3.org` | Comma-separated exact HTTPS source hosts; empty disables URL ingestion |
+| `CORPUS_DIR` | `DATA_DIR/corpus` | Local permitted timestamped source JSON, not web-served |
+| `SEMANTIC_PROVIDER` | `none` | `openai` enables embedding reranking with existing server configuration |
+| `CONTEXT_MODEL` | `gpt-4.1-mini` | Configured Responses model; live availability unverified |
+| `ENABLE_SYNTHETIC_DEMO` | false | Explicit fabricated key-free demo, excluded from real uploads |
 
 Uploads also time out after 120 seconds; each session may hold ten records, with a global capacity of 500 records until expiry/deletion. One job runs at a time. Video limits are 7680×4320 and 240 fps. Audio becomes mono 16 kHz PCM WAV; extracted output must be below 23.9 MB. Raising the duration limit may trigger this audio limit instead of silently transcribing only part of a clip.
 
@@ -58,7 +62,11 @@ Establish the cookie with `GET /`. `POST /api/analyses` takes **raw video bytes*
 - `POST /api/analyses/{id}/retry`: explicit retry of a failed retained clip, three attempts maximum.
 - `DELETE /api/analyses/{id}`: remove a terminal record and media. Active jobs return 409.
 
-States: `queued → [downloading for URLs] → extracting → transcribing → transcribed`, or `failed`. `transcribed` means **only transcription succeeded**. `investigation_status` remains `not_started`; source retrieval, alignment, fact checking, scores and reports are not implemented. Hash and metadata do not establish truth. Segment schema: `{id, start, end, text}`, with finite seconds relative to the uploaded clip. Speech recognition may make mistakes; review the transcript before downstream use.
+States: `queued → [downloading] → extracting → transcribing → transcribed`, or `failed`. Successful transcription queues `investigation_status: queued → retrieving → [interpreting]`, ending in `completed`, `source_not_found`, `inconclusive`, `setup_required`, `unavailable`, or `demo_only`. Accepted structured model interpretation sets top-level completed; an inconclusive assessment still has null risk. Other outcomes retain transcribed and its transcript. Legacy not_started records stay readable and explicitly investigable. Hash and similarity do not establish truth or recording identity.
+
+`POST /api/analyses/{id}/investigate` queues a saved transcript without fetching media or calling Whisper again (five explicit retries maximum). Active jobs and absent transcripts return 409; queue/session checks apply. `POST /api/analyses/demo` is enabled only by the demo flag and never calls a provider. See [INVESTIGATION.md](INVESTIGATION.md) for corpus import, reports, limits and key-free demo. The UI reopens reports and downloads transcript/report JSON.
+
+Interrupted retrieval/interpretation becomes unavailable with retained transcript and explicit retry; queued investigations resume. Context/embedding requests each use a 90-second HTTP timeout without auto-retry. Embedding failures use labeled lexical fallback; interpretation failures abstain. No sample findings replace missing credentials. Supabase persists report evidence/provenance/revisions and investigation state under migration 003.
 
 The provider is OpenAI `whisper-1` with `verbose_json` and both `timestamp_granularities[]=word` and `timestamp_granularities[]=segment`, per [official speech-to-text documentation](https://developers.openai.com/api/docs/guides/speech-to-text). The full extracted audio is sent in one request; the video is **not** sliced into one-second chunks. Existing `OPENAI_API_KEY` configuration is sufficient. Provider requests have a 180-second timeout and do not automatically retry. Missing keys, rejected credentials, quota/rate limits, network failures, empty speech and invalid timestamps have distinguishable errors. Provider bodies and FFmpeg stderr are never exposed as user messages.
 
@@ -69,7 +77,7 @@ The stored `transcript` JSON and `GET /api/analyses/{id}` preserve `text`, `segm
 - `words`: ordered `{id, word, start, end}` records. IDs are zero-based indices. Float start/end times retain the provider's numeric values without rounding, stretching, or distributing segment text.
 - `transcript_by_second`: JSON object with string keys `"0"` through `str(ceil(video_duration)-1)`, each containing an ordered array of word strings. Second `"65"` is elapsed **01:05** on the uploaded clip. A fractional final second still has a bucket. Integer-duration clips do not get an extra endpoint bucket.
 - `word_timing_status`: `available` or `unavailable`.
-- `timeline`: `uploaded_clip`. Original-source timestamps, when implemented later, must use a separate timeline; these times are never source offsets.
+- `timeline`: `uploaded_clip`. Report source evidence uses `original_source`; source times never rewrite clip word records.
 - `duration_seconds`: probed uploaded-video duration; `bucketing`: `word_start_floor_seconds`.
 
 **Bucketing convention:** a word is placed exactly once where its START falls in `[second, second+1)`. For example, a word starting at 0.95 and ending at 1.4 is listed only under `"0"`, while its precise timing remains in `words`. All empty buckets are explicitly `[]`; they mean **no word starts in that second**, not established silence. Order is preserved within and across buckets, including words with identical starts and overlapping boundaries.

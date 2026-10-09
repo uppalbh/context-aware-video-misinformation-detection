@@ -1,7 +1,61 @@
 const $ = id => document.getElementById(id);
-let limits, current, timer, currentTranscript, secondOffset = 0, segmentOffset = 0;
+let limits, current, timer, currentTranscript, currentReport, secondOffset = 0, segmentOffset = 0;
 const labels = {queued: 'Queued', downloading: 'Downloading supported public video', extracting: 'Validating media and extracting audio',
-  transcribing: 'Transcribing speech', transcribed: 'Transcript ready · investigation not started', failed: 'Processing failed'};
+  transcribing: 'Transcribing speech', transcribed: 'Transcript ready', completed: 'Context report completed', failed: 'Processing failed'};
+const investigationLabels = {not_started:'Investigation not started', queued:'Investigation queued', retrieving:'Retrieving and aligning curated sources',
+  interpreting:'Interpreting transcript evidence', completed:'Context interpretation completed', source_not_found:'Source not found in corpus',
+  inconclusive:'Ambiguous source match', setup_required:'Context model requires server setup', unavailable:'Investigation unavailable', demo_only:'Synthetic alignment demo only'};
+const investigating = row => ['queued','retrieving','interpreting'].includes(row.investigation_status);
+
+function textNode(tag, text) { const node = document.createElement(tag); node.textContent = text; return node; }
+function sourceLink(source) {
+  const node = textNode('a', source.title);
+  try { const url = new URL(source.url); if (url.protocol === 'https:') { node.href = url.href; node.target = '_blank'; node.rel = 'noopener noreferrer'; } } catch { /* no unsafe link */ }
+  return node;
+}
+function renderReport(report) {
+  currentReport = report; $('report-view').hidden = !report;
+  if (!report) return;
+  $('synthetic-warning').hidden = !report.synthetic;
+  $('assessment').textContent = `Assessment: ${report.assessment.replaceAll('_', ' ')}`;
+  $('scores').textContent = `Source quality: ${report.source_match_confidence === null ? 'unaccepted' : report.source_match_confidence.toFixed(3)} (heuristic, not probability) · Context risk: ${report.context_risk_score === null ? 'unavailable / inconclusive' : report.context_risk_score + '/100 (ordinal)'} · Clip-token coverage: ${(report.evidence_coverage * 100).toFixed(1)}%`;
+  $('risk-explanation').textContent = report.context_risk_explanation;
+  $('source-link').replaceChildren();
+  $('source-details').textContent = report.source ? `Provenance: ${report.source.provenance} Permission: ${report.source.permission}` : 'No source accepted.';
+  if (report.source) $('source-link').append(sourceLink(report.source));
+  $('retrieval-status').textContent = `${report.semantic_status}. ${report.ranking_limits}`;
+  $('candidates').replaceChildren();
+  for (const candidate of report.candidates) {
+    const li = document.createElement('li'); li.append(sourceLink(candidate), textNode('span', ` · rank ${candidate.rank_score.toFixed(3)} · fuzzy coverage ${(candidate.fuzzy_token_coverage * 100).toFixed(1)}% · ${candidate.kind}`)); $('candidates').append(li);
+  }
+  for (const id of ['timeline','clip-evidence','source-evidence','findings','uncertainty']) $(id).replaceChildren();
+  const alignment = report.alignment;
+  if (alignment) {
+    for (const passage of alignment.passages) {
+      const row = document.createElement('div'); row.className = 'timeline-row';
+      row.append(textNode('p', `${passage.clip_id} · clip ${timestamp(passage.clip_start)}–${timestamp(passage.clip_end)} ↔ ${passage.source_start === undefined ? 'unmatched' : 'source ' + timestamp(passage.source_start) + '–' + timestamp(passage.source_end)} · ${passage.match}`));
+      const clipBar = document.createElement('progress'); clipBar.max = Math.max(1, ...alignment.evidence.filter(e => e.timeline === 'uploaded_clip').map(e => e.end)); clipBar.value = passage.clip_start; clipBar.title = 'Clip segment start';
+      row.append(clipBar);
+      if (passage.source_start !== undefined) { const sourceBar = document.createElement('progress'); sourceBar.max = report.source.duration; sourceBar.value = passage.source_start; sourceBar.title = 'Source segment start'; row.append(sourceBar); }
+      $('timeline').append(row);
+    }
+    for (const evidence of alignment.evidence) {
+      const li = document.createElement('li'); li.append(textNode('p', `${evidence.id} · ${timestamp(evidence.start)}–${timestamp(evidence.end)}`));
+      let offset = 0;
+      const spans = alignment.omitted.filter(o => o.evidence_id === evidence.id).sort((a,b) => a.char_start - b.char_start);
+      for (const span of spans) { li.append(textNode('span', evidence.text.slice(offset, span.char_start)), textNode('mark', evidence.text.slice(span.char_start, span.char_end))); offset = span.char_end; }
+      li.append(textNode('span', evidence.text.slice(offset)));
+      $(evidence.timeline === 'uploaded_clip' ? 'clip-evidence' : 'source-evidence').append(li);
+    }
+    if (alignment.reordered || alignment.disjoint) $('timeline').append(textNode('p', 'Passages are disjoint or reordered. No single time offset applies.'));
+  }
+  $('impressions').textContent = report.context.clip_impression ? `Clip impression: ${report.context.clip_impression} Fuller context: ${report.context.full_context}` : 'No semantic interpretation accepted.';
+  for (const finding of report.context.findings) {
+    const li = textNode('li', `${finding.finding} Severity: ${finding.severity}. Supporting IDs: ${finding.support_ids.join(', ')}. Contradictory IDs: ${finding.contradiction_ids.join(', ') || 'none listed'}.`);
+    for (const quote of finding.quotes) li.append(textNode('blockquote', `${quote.evidence_id}: ${quote.text}`)); $('findings').append(li);
+  }
+  for (const item of report.uncertainty) $('uncertainty').append(textNode('li', item));
+}
 async function api(url, options) {
   const response = await fetch(url, options);
   if (!response.ok) {
@@ -74,7 +128,7 @@ async function history() {
   if (!rows.length) $('history').textContent = 'No clips yet.';
   for (const row of rows.reverse()) {
     const button = document.createElement('button');
-    button.textContent = `${new Date(row.created_at * 1000).toLocaleString()} · ${labels[row.status]}`;
+    button.textContent = `${new Date(row.created_at * 1000).toLocaleString()} · ${labels[row.status]} · ${investigationLabels[row.investigation_status] || ''}${row.ingestion?.kind === 'synthetic_demo' ? ' · SYNTHETIC' : ''}`;
     button.onclick = () => select(row.id);
     $('history').append(button);
   }
@@ -86,13 +140,15 @@ async function select(id) {
   try {
     const row = await api(`/api/analyses/${id}`);
     if (current !== id) return;
-    $('status').textContent = row.error ? `${labels[row.status]}: ${row.error.message}` : labels[row.status];
+    $('status').textContent = `${labels[row.status]}${row.error ? ': ' + row.error.message : ''} · ${investigationLabels[row.investigation_status] || 'Investigation not started'}${row.investigation_error ? ': ' + row.investigation_error.message : ''}`;
     $('metadata').textContent = row.metadata ? `${row.metadata.duration.toFixed(1)} seconds · ${row.metadata.width} × ${row.metadata.height} · ${row.metadata.frame_rate.toFixed(1)} fps` : '';
     $('retry').hidden = row.status !== 'failed' || row.attempts >= 3;
-    $('delete').hidden = !['failed', 'transcribed'].includes(row.status);
+    $('delete').hidden = !['failed', 'transcribed', 'completed'].includes(row.status) || investigating(row);
+    $('investigate').hidden = !row.transcript || investigating(row) || (row.investigation_attempts || 0) >= 5;
+    renderReport(row.report);
     currentTranscript = row.transcript;
     renderTranscript();
-    if (['queued', 'downloading', 'extracting', 'transcribing'].includes(row.status)) {
+    if (['queued', 'downloading', 'extracting', 'transcribing'].includes(row.status) || investigating(row)) {
       timer = setTimeout(() => select(id), 2000);
     } else { await history(); }
   } catch (error) { $('status').textContent = `${error.message} Reopen this clip to try fetching again.`; }
@@ -131,9 +187,27 @@ $('delete').onclick = async () => {
   try { await api(`/api/analyses/${current}`, {method:'DELETE'}); clearTimeout(timer); current = null; $('result').hidden = true; await history(); }
   catch (error) { $('status').textContent = error.message; }
 };
+$('investigate').onclick = async () => {
+  $('investigate').disabled = true;
+  try { await api(`/api/analyses/${current}/investigate`, {method:'POST'}); await select(current); }
+  catch (error) { $('status').textContent = error.message; }
+  finally { $('investigate').disabled = false; }
+};
+$('demo').onclick = async () => {
+  $('demo').disabled = true;
+  try { const row = await api('/api/analyses/demo', {method:'POST'}); await history(); await select(row.analysis_id); }
+  catch (error) { $('notice').textContent = error.message; }
+  finally { $('demo').disabled = false; }
+};
+$('report-download').onclick = () => {
+  if (!currentReport) return;
+  const url = URL.createObjectURL(new Blob([JSON.stringify(currentReport, null, 2)], {type:'application/json'}));
+  const link = document.createElement('a'); link.href = url; link.download = `clipcontext-${current}-report.json`; link.click(); setTimeout(() => URL.revokeObjectURL(url), 1000);
+};
 (async () => {
   try {
     limits = await api('/api/config');
+    $('demo-section').hidden = !limits.synthetic_demo;
     $('url-upload').hidden = !limits.url_ingestion;
     $('url-support').textContent = `Supported hosts: ${(limits.video_url_hosts || []).join(', ')}. HTTPS port 443; no query or fragment.`;
     $('limits').textContent = `MP4 or MOV · up to ${limits.max_upload_bytes / 1024 / 1024} MB · ${limits.max_duration_seconds} seconds. The server validates actual media.`;

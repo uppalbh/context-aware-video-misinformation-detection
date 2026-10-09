@@ -1,6 +1,6 @@
 # ClipContext — Final feature set and processing pipeline
 
-**Implemented:** MP4/MOV upload, [supported direct HTTPS video URLs](docs/URL_INGESTION.md), background media validation/audio extraction, private session records, and automatic transcription with segment timestamps, word timestamps, and a complete second-by-second word dictionary. Start with [setup and API documentation](docs/SETUP.md), [teammate integration contracts](docs/INTEGRATION.md), and the [completion checklist](docs/COMPLETION.md). The roadmap below describes the larger product; only stages 1–2 are implemented. Transcription completion is not a misinformation assessment.
+**Implemented:** the core investigation pipeline: MP4/MOV and [supported HTTPS URL ingestion](docs/URL_INGESTION.md), transcription with provider word/segment timings and every-second dictionaries, permitted curated-corpus import, multiple-source exact/fuzzy ranking with optional configured embedding reranking, ambiguity/weak-match abstention, separate clip/source alignment, omitted-context spans, structured evidence-validated contextual interpretation, distinct heuristic scores, persisted reports, side-by-side transcript/timeline UI, and private session history. Start with [setup](docs/SETUP.md), [source corpus and demo](docs/INVESTIGATION.md), [integration contracts](docs/INTEGRATION.md), and [verification/limits](docs/COMPLETION.md). No credentials were created or inserted: live Whisper, embeddings, contextual LLM, and Supabase remain unverified. The explicit synthetic demo makes no real-world assessment. Internet discovery/crawling and the optional trained audio-forensics branch are deferred. The original specification follows.
 
 For your 24-hour hackathon, I would lock the scope to one complete video-investigation workflow, with an optional experimental audio-forensics model. Your primary goal is to detect misleading context, not merely detect whether a video contains edits.
 
@@ -315,7 +315,7 @@ Use your template's existing naming conventions rather than forcing these exact 
 
 ## 24-hour implementation checklist
 
-0 of 6
+5 of 6 implemented locally; real credential-backed end-to-end demo remains unverified
 
 Inspect the template and define API contracts
 

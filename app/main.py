@@ -20,7 +20,7 @@ from app.config import Settings
 from app.db import Store
 from app.errors import ProcessingError
 from app.url_media import validate_url
-from app.worker import ACTIVE, recover, tick
+from app.worker import is_active, recover, tick
 
 
 def create_app(cfg=None, run_worker=True):
@@ -55,7 +55,7 @@ def create_app(cfg=None, run_worker=True):
                     # Wait for the bounded in-flight provider/subprocess call before releasing the lock.
                     await task
 
-    app = FastAPI(title="ClipContext ingestion & transcription", lifespan=lifespan)
+    app = FastAPI(title="ClipContext evidence workspace", lifespan=lifespan)
     static = Path(__file__).parent / "static"
     app.mount("/static", StaticFiles(directory=static), name="static")
 
@@ -106,7 +106,7 @@ def create_app(cfg=None, run_worker=True):
 
     async def check_capacity(user):
         rows = await asyncio.to_thread(app.state.store.all)
-        if sum(r["status"] in ACTIVE for r in rows) >= cfg.max_pending:
+        if sum(is_active(r) for r in rows) >= cfg.max_pending:
             raise HTTPException(429, "Processing queue is full. Retry later.")
         if sum(r["owner"] == user for r in rows) >= 10 or len(rows) >= 500:
             raise HTTPException(
@@ -126,6 +126,9 @@ def create_app(cfg=None, run_worker=True):
             "error": None,
             "attempts": 1,
             "investigation_status": "not_started",
+            "investigation_attempts": 0,
+            "investigation_error": None,
+            "report": None,
         }
 
     @app.get("/")
@@ -149,6 +152,7 @@ def create_app(cfg=None, run_worker=True):
             "max_duration_seconds": cfg.max_duration,
             "url_ingestion": bool(cfg.url_hosts),
             "video_url_hosts": list(cfg.url_hosts),
+            "synthetic_demo": cfg.demo_enabled,
         }
 
     @app.post("/api/analyses", status_code=202)
@@ -259,7 +263,7 @@ def create_app(cfg=None, run_worker=True):
             ):
                 raise HTTPException(410, "Media was removed. Upload a new clip.")
             rows = await asyncio.to_thread(app.state.store.all)
-            if sum(r["status"] in ACTIVE for r in rows) >= cfg.max_pending:
+            if sum(is_active(r) for r in rows) >= cfg.max_pending:
                 raise HTTPException(429, "Processing queue is full. Retry later.")
             row.update(status="queued", error=None, attempts=row["attempts"] + 1)
             await asyncio.to_thread(app.state.store.save, row)
@@ -270,11 +274,53 @@ def create_app(cfg=None, run_worker=True):
         write_guard(request)
         async with upload_lock:
             row = await owned(request, analysis_id)
-            if row["status"] in ACTIVE:
+            if is_active(row):
                 raise HTTPException(409, "Wait until processing ends before deleting.")
             await asyncio.to_thread(app.state.store.delete, analysis_id)
             shutil.rmtree(cfg.data_dir / analysis_id, ignore_errors=True)
         return Response(status_code=204)
+
+    @app.post("/api/analyses/demo", status_code=202)
+    async def demo(request: Request):
+        write_guard(request)
+        user = owner(request)
+        if not cfg.demo_enabled:
+            raise HTTPException(404, "Synthetic demo is disabled.")
+        from app.demo import transcript
+
+        async with upload_lock:
+            await check_capacity(user)
+            row = queued_row(user, uuid.uuid4().hex)
+            row.update(
+                status="transcribed",
+                transcript=transcript(),
+                ingestion={"kind": "synthetic_demo"},
+                investigation_status="queued",
+            )
+            await asyncio.to_thread(app.state.store.save, row, True)
+        return {"analysis_id": row["id"], "status": "transcribed", "synthetic": True}
+
+    @app.post("/api/analyses/{analysis_id}/investigate", status_code=202)
+    async def reinvestigate(analysis_id: str, request: Request):
+        write_guard(request)
+        async with upload_lock:
+            row = await owned(request, analysis_id)
+            if is_active(row) or not row.get("transcript"):
+                raise HTTPException(409, "A retained transcript and an idle job are required.")
+            if row.get("investigation_attempts", 0) >= 5:
+                raise HTTPException(409, "Investigation retry limit reached.")
+            rows = await asyncio.to_thread(app.state.store.all)
+            if sum(is_active(r) for r in rows) >= cfg.max_pending:
+                raise HTTPException(429, "Processing queue is full. Retry later.")
+            row.update(
+                status="transcribed",
+                investigation_status="queued",
+                investigation_error=None,
+                report=None,
+                investigation_attempts=row.get("investigation_attempts", 0) + 1,
+            )
+            await asyncio.to_thread(app.state.store.save, row)
+        return {"analysis_id": analysis_id, "investigation_status": "queued"}
 
     return app
 

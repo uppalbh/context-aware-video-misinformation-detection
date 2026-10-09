@@ -1,79 +1,55 @@
-# Teammate integration contract
+# Teammate integration contracts
 
-This delivery implements README stages **1–2**: local MP4/MOV and [supported direct HTTPS URL ingestion](URL_INGESTION.md), actual-media validation, audio extraction, queued background processing, persistence and timestamped speech transcription. Source retrieval/alignment/context assessment/scoring are downstream modules to implement separately. `transcribed` is never an investigation-completed or fake/real result.
+Core README workflow is implemented in modular Python services. Networking is confined to media/provider/store adapters; curated URLs are references, never automatic downloads. One durable worker owns state changes. See [SETUP.md](SETUP.md) for HTTP/session/media contracts and [INVESTIGATION.md](INVESTIGATION.md) for corpus/ranking limits.
 
-## Module boundaries
-
-| Module | Reusable boundary |
+| Module | Callable boundary |
 | --- | --- |
-| `app/media.py` | `inspect(path, Settings) -> metadata`; `extract(path, output, Settings)` probes/decodes private local media, with bounded FFmpeg subprocesses. Neither calls a speech provider nor writes database rows. |
-| `app/url_media.py` | `validate_url(url, hosts)` and `download(url, output, Settings)` handle supported direct media links with public-address pinning, verified TLS and bounded streaming. No provider/database/UI dependency. |
-| `app/transcription.py` | `transcribe(audio_path, api_key, duration) -> transcript` calls OpenAI once, then delegates validation/indexing. No UI or database dependency. |
-| `app/transcript.py` | `normalize(provider_payload, duration) -> transcript`; `word_index(raw_words, duration) -> (words, per_second)` are pure deterministic normalization/index functions. No network, storage, media processes or frontend dependency. |
-| `app/db.py` | `Store.save/get/all/delete` supports server-only Supabase or explicit local SQLite. Transcript fields are JSON/JSONB; no migration is needed to extend the transcript object. |
-| `app/worker.py` | `process(row, store, Settings)` owns stage transitions/persistence and extracted-audio cleanup. `recover` handles restart; `tick` expires records and runs one queued job. |
-| `app/main.py` | `create_app(Settings)` provides browser/API access, streaming ingestion, session authorization and worker lifecycle. |
+| `app/media.py` | `inspect(path,cfg) -> metadata`; `extract(path,out,cfg)` bounded FFmpeg/ffprobe, uploaded container clock |
+| `app/url_media.py` | `validate_url(url,hosts)`; `download(url,out,cfg)` direct allowlisted public-address pinned HTTPS media |
+| `app/transcription.py` | `transcribe(audio,key,duration)` single Whisper call, pure normalization delegation |
+| `app/transcript.py` | `normalize(payload,duration)`; `word_index(words,duration)` pure validation/every-second indexing |
+| `app/corpus.py` | `validate_source(JSON)` normalized source/revision; `load_corpus(Path)` sources; CLI operator import |
+| `app/source_search.py` | `search(transcript,sources,cfg)` status/candidates/selected/revisions/phrases/semantic_status; multiple-source comparison/abstention |
+| `app/alignment.py` | `align(transcript,source)` passages/evidence/omitted/coverage/flags; segment-clock/token-span matching |
+| `app/providers.py` | `semantic_scores(query,documents,cfg)` embeddings; `interpret(package,cfg,schema)` structured Responses; `DiscoveryProvider` future interface only |
+| `app/context_analysis.py` | `analyze(alignment,source,cfg)` interpretation or abstention; `validate_interpretation(value,evidence)` IDs/quotes/schema |
+| `app/scoring.py` | `contextual_risk(context)` null or ordinal severity heuristic, separate from ranking/coverage |
+| `app/report.py` | `assemble(retrieval,interpretation=None)` schema_version:1 report; deterministic, no network/storage |
+| `app/investigation.py` | `investigate(row,store,cfg,sources=None)` persists investigation; excludes synthetic corpus for real ingestion |
+| `app/worker.py` | `process` ingestion/STT/cleanup; `tick` expires/dispatches oldest queued job; `recover` interruption; `is_active` shared guard |
+| `app/db.py` | `Store.save/get/all/delete`; SQLite JSON or server-only Supabase JSONB |
+| `app/main.py` | `create_app(cfg,run_worker=True)` session API, admission, lifecycle, browser UI |
 
-The provider module re-exports `normalize` for existing imports. Prefer importing pure processing from `app.transcript` in new integrations. Processing errors expose stable `code` and safe `message` via `ProcessingError.public()`; do not publish FFmpeg stderr, provider response bodies, keys or private media paths.
+Adapters use `ProcessingError(code,safe_message)`; never expose provider bodies, secrets, FFmpeg stderr or media paths. STT adapter re-exports normalization for backwards compatibility. Migration 003 adds report/investigation fields and completed; transcript JSON needs no shape migration.
 
-## HTTP and records
+## Transcript contract preserved
 
-`GET /` establishes a random HttpOnly private-session cookie. Upload **raw bytes** to `POST /api/analyses` with `Content-Type: video/mp4` or `video/quicktime` (not multipart). Response HTTP 202:
+`text`, ordered `segments:[{id,start,end,text}]`, `words:[{id,word,start,end}]|null`, `transcript_by_second:{"0":[word],"1":[],...}|null`, `word_timing_status`, `timeline:"uploaded_clip"`, `duration_seconds`, `bucketing:"word_start_floor_seconds"`, `language`, `provider`, `model`. Words go once into floor(start) and retain provider floats. Every second through ceil(duration)-1 exists. Empty buckets mean no word starts, not confirmed silence. Missing word data yields unavailable/null fields, never invented times. Legacy segment-only records remain readable. ASR/times are estimates. Leading audio gaps are preserved; do not add metadata offsets again.
 
-```json
-{"analysis_id": "<32 hex characters>", "status": "queued"}
-```
-
-Poll `GET /api/analyses/{analysis_id}` with the same cookie. Top-level fields include `id`, `status`, `created_at`, `updated_at`, `sha256`, `size_bytes`, `metadata`, `transcript`, `error`, `attempts` and `investigation_status`. The stored owner hash is never returned. Other sessions receive 404.
-
-`queued → [downloading for URLs] → extracting → transcribing → transcribed` or `failed`. During queued/active/failed states the transcript may be null. On success `investigation_status` remains **`not_started`**. Hash and media metadata identify/describe a clip, not its truthfulness. Failed jobs expose `{code,message}`, can explicitly retry retained inputs up to three total attempts, and never fabricate a report. Read history, retry and deletion endpoints are described in [SETUP.md](SETUP.md); URL API/record fields and migration 002 are in [URL_INGESTION.md](URL_INGESTION.md).
-
-## Transcript shape
-
-```text
-text: string
-segments: [{id: integer, start: seconds, end: seconds, text: string}]
-words: [{id: integer, word: string, start: seconds, end: seconds}] | null
-transcript_by_second: {"0": [word, ...], "1": [], ..., "65": [word, ...]} | null
-word_timing_status: "available" | "unavailable"
-timeline: "uploaded_clip"
-duration_seconds: number
-bucketing: "word_start_floor_seconds"
-language: string | null
-provider: "openai"
-model: "whisper-1"
-```
-
-Words are assigned **once by start** in `[s,s+1)`; cross-second words retain their end separately. Every elapsed second through `ceil(duration)-1` exists, including the fractional last second and empty lists. JSON keys are strings. A bucket with no starting word does not establish silence. Exact provider floating-point values are retained in word records; recognition/timing remain model estimates, not ground truth or millisecond accuracy. Starts are nonnegative/nondecreasing and strictly below video duration; overlaps/equal starts are valid; ends tolerate at most 0.5 seconds beyond duration. Nothing is rounded into a different bucket.
-
-Missing word timings keep the segment transcript but set timing status unavailable and both word/index fields null. Malformed timings fail explicitly. Existing stored segment-only JSON remains readable: callers must check presence rather than assuming new fields. No word times are inferred by dividing segment text.
-
-Extracted audio preserves container-relative elapsed timestamps, including leading silence for a late audio stream. Metadata exposes `audio_start_seconds` and `timeline_origin: container_start`. Words use this normalized uploaded-clip timeline. **Keep original-source timestamps and alignment offsets in a separate structure**; never rewrite clip-relative word starts to source times.
-
-## Consuming from a later module
+## Retrieval/alignment contracts
 
 ```python
-from app.transcript import normalize
+from app.corpus import load_corpus
+from app.source_search import search
 
-
-# Provider integration already calls normalize; normally consume row["transcript"].
-def source_search_input(row: dict) -> dict:
-    if row["status"] != "transcribed" or not row.get("transcript"):
-        raise ValueError("A transcript must exist before source search")
-    transcript = row["transcript"]
-    return {
-        "analysis_id": row["id"],
-        "query_text": transcript["text"],
-        "clip_segments": transcript["segments"],
-        "clip_words": transcript.get("words"),  # legacy or unavailable -> None
-        "clip_second_65": (transcript.get("transcript_by_second") or {}).get("65"),
-    }
+result = search(row["transcript"], load_corpus(cfg.corpus_dir), cfg)
+if result["selected"]:
+    alignment = result["selected"]["alignment"]
+    source = result["selected"]["source"]
 ```
 
-The example is an input adapter only; no source is searched or invented. A downstream worker should consume successfully persisted `transcribed` records, retain separate provenance/evidence, and own its own statuses/schema. Current MVP does not provide a multi-consumer claim API. Do not run a second ingestion worker or overwrite `transcribed` with an unsupported status in this table without extending the schema and orchestration.
+Selected contains source/alignment/component scores; null for weak/ambiguous matches. Candidate summaries include ID/title/URL/kind/revision and lexical/exact/fuzzy/semantic/rank scores. Revision hashes snapshot transcript/provenance; reports preserve those revisions and source text, so corpus replacement does not rewrite history.
 
-## Operational assumptions and verified limits
+Evidence IDs are clip:c{index} and source:s{index}, with timeline/start/end/text. Passages map clip segment bounds to source segment bounds, source IDs, exact/approximate/unmatched status and coverage. No source word time is inferred. Omitted identifies literal char_start/char_end/text spans, position and language cues; spans can be ASR differences, and cues are not semantic judgments. Reordered/disjoint flags preclude a single offset; bounded context can omit distant gap segments, listed explicitly.
 
-One worker on one host owns a private persistent volume and durable store. Local file locking prevents duplicate processes using that volume; distributed leasing and cloud media storage are deferred. Extraction/transcription run off the HTTP event loop. Configurable limits and cleanup policy are documented in SETUP.md. Interrupted active jobs fail with explicit retry; queued records survive restart; generated orphan folders and leftover extracted audio are removed without deleting unrelated folders. Successful raw inputs are removed; failed retryable inputs expire with records. Nothing serves media publicly.
+## Context/report contracts
 
-SQLite is an explicit development option. Supabase service-role credentials and OpenAI keys stay server-side in ignored configuration. Live provider transcription and remote Supabase migration/access verification require configured credentials; deterministic provider/transport tests do not establish those live capabilities.
+Model fields: assessment (context_changes_meaning/context_consistent/inconclusive), clip_impression, full_context, findings, uncertainty. Each finding has finding/severity, support_ids including source and clip, disjoint contradiction_ids, and ≥1 literal cited quote {evidence_id,text}. Unknown IDs, fabricated quotes, extra fields, empty uncertainty, unsupported intent/originality claims and inconsistent severity fail validation. Structural/literal grounding cannot prove model reasoning is sound.
+
+Report fields: schema_version, assessment, source_status, source_match_confidence/quality label, context_risk_score/explanation, evidence_coverage/definition, source, alignment, context, candidates, semantic_status, distinctive_phrases, ranking_limits, corpus_revisions, uncertainty, synthetic. Risk is null for unavailable/inconclusive interpretation. No fake/real or truth score exists. Supporting/contradictory IDs and literal quotes remain inspectable in UI/JSON.
+
+## State/ownership
+
+Transcribed means STT exists; investigation owns its queue/terminal states. Completed requires valid model output; assessment may still be inconclusive. Missing corpus yields source_not_found; ambiguity inconclusive; absent model setup setup_required with alignment; provider/corpus errors unavailable. Investigation retry uses transcript, never rebills Whisper. Interrupted provider interpretation is not auto-retried. Legacy records explicitly queue through session API.
+
+One host/worker/private volume/file lock; no distributed claims or second producer. API capacities count both queues. Retention removes analyses, not operator corpus. Credentials stay server-only; live provider/migration verification remains outstanding. No internet crawler/discovery service is implemented. Future discovery must obtain permitted transcripts and validate/import before retrieval; a returned URL alone is not evidence.

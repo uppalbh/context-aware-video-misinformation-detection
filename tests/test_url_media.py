@@ -338,7 +338,7 @@ def test_url_job_private_retry_recovery_and_shared_pipeline(cfg, monkeypatch):
         tick(store, cfg)
         row = client.get(f"/api/analyses/{aid}").json()
         assert row["status"] == "transcribed" and row["sha256"] == "test-hash"
-        assert row["investigation_status"] == "not_started" and row["transcript"][
+        assert row["investigation_status"] == "queued" and row["transcript"][
             "transcript_by_second"
         ] == {"0": ["Fixture"], "1": []}
         assert not (cfg.data_dir / aid / "clip").exists()

@@ -39,8 +39,20 @@ class Settings:
             if host.strip()
         )
     )
+    corpus_dir: Path | None = None
+    semantic_provider: str = field(default_factory=lambda: os.getenv("SEMANTIC_PROVIDER", "none"))
+    context_model: str = field(default_factory=lambda: os.getenv("CONTEXT_MODEL", "gpt-4.1-mini"))
+    demo_enabled: bool = field(
+        default_factory=lambda: os.getenv("ENABLE_SYNTHETIC_DEMO", "false").lower() == "true"
+    )
 
     def __post_init__(self):
+        self.corpus_dir = (
+            self.corpus_dir
+            or Path(os.getenv("CORPUS_DIR", str(self.data_dir / "corpus"))).resolve()
+        )
+        if self.semantic_provider not in {"none", "openai"}:
+            raise ValueError("SEMANTIC_PROVIDER must be none or openai")
         if not (0 < self.max_duration <= 3600 and 0 < self.max_upload_mb <= 1024):
             raise ValueError("Upload limit must be 1–1024 MB; duration must be 0–3600 seconds")
         if self.max_pending < 1 or self.retention_hours <= 0 or self.media_timeout < 1:

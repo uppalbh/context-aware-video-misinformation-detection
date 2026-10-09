@@ -128,10 +128,12 @@ def test_worker_transcript_and_retry(client, cfg, monkeypatch):
     monkeypatch.setattr("app.worker.transcribe", lambda *a: transcript)
     process(store.get(aid), store, cfg)
     row = client.get(f"/api/analyses/{aid}").json()
-    assert row["status"] == "transcribed" and row["investigation_status"] == "not_started"
+    assert row["status"] == "transcribed" and row["investigation_status"] == "queued"
     assert row["transcript"] == transcript
     assert not (cfg.data_dir / aid / "clip").exists()
     assert client.post(f"/api/analyses/{aid}/retry").status_code == 409
+    tick(store, cfg)
+    assert store.get(aid)["investigation_status"] == "source_not_found"
     assert client.delete(f"/api/analyses/{aid}").status_code == 204
 
 
