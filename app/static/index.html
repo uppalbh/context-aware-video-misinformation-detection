@@ -1,0 +1,20 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>ClipContext · Transcript workspace</title><link rel="stylesheet" href="/static/style.css"></head>
+<body><main>
+<header><span class="badge">CLIPCONTEXT / INGESTION</span><h1>Start with what was said.</h1>
+<p>Upload a clip to extract its audio and create a timestamped transcript.</p></header>
+<aside>A transcript is a starting point. Source retrieval and contextual investigation have not run. No truthfulness assessment is made.</aside>
+<section><h2>Upload a clip</h2><p id="limits">MP4 or MOV. Loading upload limits…</p>
+<p>Your audio is sent to OpenAI for transcription. Media and analysis records expire after the server’s configured retention period (24 hours by default).</p>
+<form id="upload"><label for="file">Video file</label><input id="file" type="file" accept=".mp4,.mov,video/mp4,video/quicktime" required>
+<button id="submit" type="submit">Upload & transcribe</button></form>
+<p id="notice" role="status" aria-live="polite"></p></section>
+<section><h2>This session’s clips</h2><p>Records are private to this browser session. Keep cookies to return to them.</p>
+<div id="history"></div></section>
+<section id="result" hidden><h2>Transcript</h2><p id="status" role="status" aria-live="polite"></p>
+<p id="metadata"></p><button id="retry" hidden>Retry transcription</button><button id="delete" hidden>Delete analysis</button>
+<ol id="segments"></ol></section>
+<footer>URL ingestion is deferred. Upload a local MP4/MOV you’re authorized to process.</footer>
+</main><script src="/static/app.js" defer></script></body></html>
