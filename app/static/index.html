@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>ClipContext · Evidence workspace</title><link rel="stylesheet" href="/static/style.css"></head>
+<body><main>
+<header><span class="badge">CLIPCONTEXT / EVIDENCE</span><h1>Put the words back in context.</h1>
+<p>Trace a clip through transcription, curated-source matching, and an evidence-referenced context report.</p></header>
+<aside>Textual similarity is evidence of a candidate match. It does not establish original-video identity, factual truth, or uploader intent. Missing sources or interpretation remain inconclusive.</aside>
+<section><h2>Upload a clip</h2><p id="limits">MP4 or MOV. Loading upload limits…</p>
+<p>Your audio is sent to OpenAI for transcription. When configured, transcript evidence is sent for contextual interpretation and optional semantic reranking. Media and records expire after configured retention (24 hours by default).</p>
+<form id="upload"><label for="file">Video file</label><input id="file" type="file" accept=".mp4,.mov,video/mp4,video/quicktime" required>
+<button id="submit" type="submit">Upload & transcribe</button></form>
+<form id="url-upload" hidden><h3>Or use a supported public video link</h3>
+<p id="url-support"></p><label for="video-url">Direct HTTPS video URL</label>
+<input id="video-url" type="url" maxlength="2048" placeholder="https://media.w3.org/…/video.mp4" required>
+<button id="url-submit" type="submit">Download & transcribe</button>
+<p>Only public direct .mp4/.mov files are supported. YouTube pages, login links, signed URLs and other hosts are unsupported. Submit media you’re authorized to process.</p></form>
+<p id="notice" role="status" aria-live="polite"></p></section>
+<section id="demo-section" hidden><h2>Try a synthetic example</h2><p>Fabricated council text, without a real recording, transcription call, or model assessment. This checks retrieval, omissions, timelines and saved reports.</p><button id="demo">Run synthetic demo</button></section>
+<section><h2>This session’s clips</h2><p>Records are private to this browser session. Keep cookies to return to them.</p>
+<div id="history"></div></section>
+<section id="result" hidden><h2>Transcript</h2><p id="status" role="status" aria-live="polite"></p>
+<p id="metadata"></p><button id="retry" hidden>Retry transcription</button><button id="delete" hidden>Delete analysis</button>
+<button id="investigate" hidden>Investigate saved transcript again</button>
+<div id="report-view" hidden><h3>Evidence report</h3><p id="synthetic-warning" hidden class="warning">SYNTHETIC EXAMPLE — fabricated material; no real-world assessment.</p>
+<p id="assessment"></p><p id="scores"></p><p id="risk-explanation"></p><p id="source-details"></p><div id="source-link"></div>
+<p id="retrieval-status"></p><h4>Ranked candidate sources</h4><ol id="candidates"></ol>
+<h4>Clip ↔ source timeline</h4><p>Each bar marks a segment start on its own clock. Bounds are segment estimates; no source word times are inferred.</p><div id="timeline"></div>
+<h4>Transcript evidence</h4><p>Highlighted source spans were not matched in the clip. They may reflect omitted context or transcription differences; significance requires interpretation.</p>
+<div class="comparison"><div><h4>Uploaded clip clock</h4><ol id="clip-evidence"></ol></div><div><h4>Original source clock</h4><ol id="source-evidence"></ol></div></div>
+<h4>Context interpretation</h4><p id="impressions"></p><ol id="findings"></ol><h4>Uncertainty</h4><ul id="uncertainty"></ul>
+<button id="report-download">Download evidence report JSON</button></div>
+<button id="download" hidden>Download transcript JSON</button>
+<div id="seconds-view" hidden><h3>Second-by-second words</h3>
+<p>Words appear in the second where they start. An empty bucket means no word starts there; a word may continue from an earlier second. Times are model estimates on the uploaded clip.</p>
+<label for="second-jump">Go to elapsed second (65 = 01:05)</label>
+<input id="second-jump" type="number" min="0" step="1" value="0">
+<button id="second-prev">Previous 60 seconds</button><button id="second-next">Next 60 seconds</button>
+<p id="second-page" role="status"></p><ol id="seconds"></ol></div>
+<p id="word-unavailable" hidden>Word timing is unavailable for this record. Segment context remains readable; no per-second timings have been inferred.</p>
+<h3>Segment context</h3><button id="segment-prev">Previous segments</button><button id="segment-next">Next segments</button>
+<p id="segment-page" role="status"></p><ol id="segments"></ol></section>
+<footer>Uploads and supported URL downloads use the same validation and transcription pipeline.</footer>
+</main><script src="/static/app.js" defer></script></body></html>

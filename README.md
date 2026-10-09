@@ -1,5 +1,6 @@
 # ClipContext — Final feature set and processing pipeline
 
+**Implemented:** the core investigation pipeline: MP4/MOV and [supported HTTPS URL ingestion](docs/URL_INGESTION.md), transcription with provider word/segment timings and every-second dictionaries, permitted curated-corpus import, multiple-source exact/fuzzy ranking with optional configured embedding reranking, ambiguity/weak-match abstention, separate clip/source alignment, omitted-context spans, structured evidence-validated contextual interpretation, distinct heuristic scores, persisted reports, side-by-side transcript/timeline UI, and private session history. Start with [setup](docs/SETUP.md), [source corpus and demo](docs/INVESTIGATION.md), [integration contracts](docs/INTEGRATION.md), and [verification/limits](docs/COMPLETION.md). No credentials were created or inserted: live Whisper, embeddings, contextual LLM, and Supabase remain unverified. The explicit synthetic demo makes no real-world assessment. Internet discovery/crawling and the optional trained audio-forensics branch are deferred. The team ownership and original specification follow.
 
 1\. Clip ingestion: Abdullah
 
@@ -303,7 +304,7 @@ Use your template's existing naming conventions rather than forcing these exact 
 
 ## 24-hour implementation checklist
 
-0 of 6
+5 of 6 implemented locally; real credential-backed end-to-end demo remains unverified
 
 Inspect the template and define API contracts
 
