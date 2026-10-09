@@ -1,50 +1,40 @@
 # ClipContext — Final feature set and processing pipeline
 
-**Implemented:** MP4/MOV upload, [supported direct HTTPS video URLs](docs/URL_INGESTION.md), background media validation/audio extraction, private session records, and automatic transcription with segment timestamps, word timestamps, and a complete second-by-second word dictionary. Start with [setup and API documentation](docs/SETUP.md), [teammate integration contracts](docs/INTEGRATION.md), and the [completion checklist](docs/COMPLETION.md). The roadmap below describes the larger product; only stages 1–2 are implemented. Transcription completion is not a misinformation assessment.
-
-For your 24-hour hackathon, I would lock the scope to one complete video-investigation workflow, with an optional experimental audio-forensics model. Your primary goal is to detect misleading context, not merely detect whether a video contains edits.
-
-## 1. Exact features to build
-
-### P0 — Essential features
-
-These must work end to end for your demo.
-
-1\. Clip ingestion
+1\. Clip ingestion: Abdullah
 
 - Upload MP4/MOV video.
 - Accept a supported public video URL if time permits.
 - Validate size, format, duration, and URL safety.
 - Extract audio and store the analysis record.
 
-2\. Automatic transcription
+2\. Automatic transcription: Abdullah
 
 - Convert speech to text using a pretrained transcription API.
 - Preserve timestamps for transcript segments.
 - Store the transcript and handle transcription failures.
 
-3\. Original-source retrieval
+3\. Original-source retrieval: Jason
 
 - Search a curated corpus of original recordings and transcripts.
 - Combine exact phrase matching with semantic similarity.
 - Rank candidate sources and determine whether the evidence is sufficient to accept a match.
 - Return source URLs and provenance.
 
-4\. Transcript and timestamp alignment
+4\. Transcript and timestamp alignment: Grant
 
 - Locate the clip's matching passage in the original recording.
 - Identify preceding and following sentences.
 - Highlight omitted qualifications, negations, questions, and replies.
 - Distinguish exact matches from approximate matches.
 
-5\. Context-divergence analysis
+5\. Context-divergence analysis: Abdullah
 
 - Compare the apparent implication of the isolated clip with its fuller context.
 - Use an LLM to interpret the evidence.
 - Require findings to cite specific transcript segments.
 - Allow a result of inconclusive when evidence is insufficient.
 
-6\. Evidence report
+6\. Evidence report: Jason
 
 - Contextual-risk score with an explanation.
 - Source-match quality and evidence coverage.
@@ -54,15 +44,12 @@ These must work end to end for your demo.
 
 ### P1 — Features that make the project stand out
 
-7\. Visual evidence timeline
+7\. Visual evidence timeline: Jason
 
 Display the uploaded clip alongside the original recording, with matching timestamps, transcript highlights, and omitted context.
 
-8\. Experimental audio-edit detector
 
-Extract audio features such as MFCCs, spectral changes, and energy. Optionally train a small LSTM or 1D CNN to flag possible acoustic discontinuities. Display these as suspected edit locations, not proof of deception.
-
-9\. Analysis history
+8\. Analysis history: Abdullah
 
 Save previous analyses and let users reopen their reports. Reuse the template's authentication if it already exists; otherwise, history can be session-based.
 
